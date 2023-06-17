@@ -1,0 +1,120 @@
+name: 'CIP Build and test'
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+    branches:
+      - '*'
+    paths:
+      - 'images/**/base/Dockerfile'
+      - 'images/**/*buster*/Dockerfile'
+      - 'images/**/*alpine*/Dockerfile'
+      - 'images/**/slim/Dockerfile'
+      - 'images/**/*bullseye*/Dockerfile'
+      - 'images/**/*amazon*/Dockerfile'
+      - '!images/**/test/Dockerfile'
+
+env:
+  ARTIFACTORY_REPO: 'redventures-container-pipeline-docker.jfrog.io'
+  ARTIFACTORY_USER: 'container-pipeline-ci'
+  ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix-json: ${{ steps.build.outputs.matrix }}
+    name: 'Build and test'
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: 'Build image'
+        id: build
+        run: |
+          declare -a image_list
+          echo "$GITHUB_BASE_REF"
+          echo "$GITHUB_HEAD_REF"
+          echo "$GITHUB_REF"
+          echo "$GITHUB_SHA"
+          for changed_file in $(git diff-tree --no-commit-id --name-only --diff-filter=d -r $(git rev-parse origin/$GITHUB_BASE_REF) $(git rev-parse "$GITHUB_SHA")); do
+          # Folder structure: images/node/15/build/Dockerfile (FROM node:15.7-buster) or images/golang/1.15/build/Dockerfile (FROM golang:1.15.11-alpine)
+            if echo $changed_file | grep -v "test" | grep -q "Dockerfile"; then
+              echo "Changed Dockerfile: $changed_file"
+              IMAGE_LANG=`echo "$changed_file" | awk -F"/" '{print $2;}'` # node or golang or dotnet
+              if echo $changed_file | grep -q "dotnet"; then # images/dotnet/aspnet/3.1/buster-slim/Dockerfile
+                IMAGE_TYPE=`echo "$changed_file" | awk -F"/" '{print $3;}'` # aspnet
+                IMAGE_VER_DOTNET=`echo "$changed_file" | awk -F"/" '{print $4;}'` # 3.1
+                IMAGE_VER=$IMAGE_TYPE-$IMAGE_VER_DOTNET # aspnet-3.1
+                IMAGE_DIST=`echo "$changed_file" | awk -F"/" '{print $5;}'` # buster-slim or alpine
+              else
+                IMAGE_VER=`echo "$changed_file" | awk -F"/" '{print $3;}'` # 15 OR 1.15
+                IMAGE_DIST=`echo "$changed_file" | awk -F"/" '{print $4;}'` # buster or alpine or base
+              fi
+              # Image name based on whether image has -xyz pattern for ex: golang:1.15.11-alpine vs alpine:3.13
+              if [ $IMAGE_DIST != "base" ]; then
+                IMAGE=$IMAGE_LANG-$IMAGE_VER-$IMAGE_DIST # node-15-buster
+              elif [ $IMAGE_DIST = "base" ]; then
+                IMAGE=$IMAGE_LANG-$IMAGE_VER # alpine-3
+              fi
+              echo "Building rv-$IMAGE image.."
+              if echo $IMAGE | grep -q "dotnet"; then # dotnet-aspnet-3.1-buster-slim or dotnet-aspnet-3.1-alpine
+                docker build -q -t $ARTIFACTORY_REPO/rv-$IMAGE ./images/$IMAGE_LANG/$IMAGE_TYPE/$IMAGE_VER_DOTNET/$IMAGE_DIST
+              else
+                docker build -q -t $ARTIFACTORY_REPO/rv-$IMAGE ./images/$IMAGE_LANG/$IMAGE_VER/$IMAGE_DIST
+              fi
+              echo "Successfully built $ARTIFACTORY_REPO/rv-$IMAGE"
+              final_image="$ARTIFACTORY_REPO/rv-$IMAGE"
+              image_list+=("$final_image")
+              echo "----------------------------------------------------------------------------"
+            fi
+          done
+          echo "--------------------List of images-----------------------------------"
+          echo "${image_list[@]}"
+          echo "::set-output name=matrix::$(jq --compact-output --null-input '$ARGS.positional' --args -- "${image_list[@]}")"
+          echo "--------------------Saving images to a tar file----------------------------------"
+          set -x
+          docker save -o image.tar "${image_list[@]}"
+          ls -latr image.tar
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: myimage
+          path: image.tar
+
+  wiz:
+    runs-on: ubuntu-latest
+    needs: [build-test]
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJson(needs.build-test.outputs.matrix-json) }}
+    name: 'Wiz scan'
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: myimage
+          path: image.tar
+      - name: Load Docker image
+        run: |
+          cd image.tar
+          docker load --input image.tar
+          docker image ls -a
+      - run: docker image ls
+      - name: 'Wiz scan and Slack notification'
+        uses: lonelyplanet/actions/.github/actions/wiz-scan-notify@main
+        with:
+          image: ${{ matrix.image }}
+          # slack_notify: true # Use this instead to send a Slack notification for every failed scan including Pull request events
+          slack_notify: ${{ github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch' }} # Notify when merged to master or manual workflow trigger
+          slack_channel: 'container-image-failures'
+          SLACK_WEBHOOK: ${{ secrets.SLACK_FAILURE_WEBHOOK }}
+          WIZCLI_ID: ${{ secrets.WIZCLI_ID }}
+          WIZCLI_SECRET: ${{ secrets.WIZCLI_SECRET }}

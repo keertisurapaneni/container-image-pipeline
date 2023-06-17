@@ -1,0 +1,42 @@
+name: 'Create PRs for CIP Image Updates'
+on:
+  push: 
+    branches:
+      # Only generate pr's if changes occur in a CIP Image Update Branch
+      - 'cip-update-*'
+
+env:
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_FAILURE_WEBHOOK }} # used by act10ns/slack@v1
+  DST_BRANCH: master
+
+# The src branch is inferred by using the branch that triggered the workflow
+jobs:
+  pull-request:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source code
+        uses: actions/checkout@v3
+
+      - name: Create Pull Request
+        id: open-pr
+        uses: repo-sync/pull-request@v2
+        with:
+          github_token: ${{ secrets.GH_TOKEN }}
+          destination_branch: ${{ env.DST_BRANCH }}
+          pr_allow_empty: false
+      
+      - name: Echo Pull Request URL
+        run: | 
+          if [ -z "${{ steps.open-pr.outputs.pr_url }}" ]; then
+            echo "Failed to create Pull Request."
+            exit 1;
+          else           
+            echo ${{ steps.open-pr.outputs.pr_url }}
+          fi
+
+      - name: 'Failure notification'
+        uses: act10ns/slack@v1
+        with:
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+        if: failure()

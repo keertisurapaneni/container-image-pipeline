@@ -1,0 +1,26 @@
+name: PR_${REGISTRY_TYPE}_${SG_BATCH_ID}
+description: This batch change create Pull Requests (PRs) to update $IMAGE base images in Dockerfiles to $IMAGE:$SEM_VER, as part of RV container image pipeline.
+
+on:
+  - repositoriesMatchingQuery: ^FROM $REGISTRY_ENDPOINT/$IMAGE:.*$ file:Dockerfile repo:($ORGS_FILTER)\/.*$  patternType:regexp
+
+  # In each repository
+steps:
+  # find all Dockerfiles and replace the old image tags with our desired ones:
+  - run: |
+      echo $IMAGE
+      find . -name "*Dockerfile*" -type f |\
+      xargs sed\
+        -i\
+        --regexp-extended\
+        's/FROM $REGISTRY_ENDPOINT\/$IMAGE:\d+.\d+.\d+?\-*\S*/FROM $REGISTRY_ENDPOINT\/$IMAGE:$SEM_VER/g'
+    container: alpine:3
+
+# Describe the changeset (e.g., GitHub pull request) you want for each repository.
+changesetTemplate:
+  title: Automatic Dockerfile Image Updater
+  body: There is a new base image --> `$REGISTRY_ENDPOINT/$IMAGE:$SEM_VER`
+  branch: ${IMAGE}_${SEM_VER}_${REGISTRY_TYPE}_${SG_BATCH_ID} # Push the commit to this branch.
+  commit:
+    message: Fix Dockerfile base image in /Dockerfile 
+  published: true

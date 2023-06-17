@@ -1,0 +1,43 @@
+name: 'CIP Image Update'
+on:
+  schedule:
+    # * is a special character in YAML so you have to quote this string
+    - cron:  '00 10,22 * * *' # run every day at 6am & 6pm EST
+  workflow_dispatch:
+
+
+env:
+  TASK_DIR: ./task/cip-image-update
+  NODE_VERSION: 18.4.0
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_FAILURE_WEBHOOK }} # used by act10ns/slack@v1
+
+jobs:
+  update-images:
+    name: 'Update CIP Images'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Set up Node (${{ env.NODE_VERSION }})
+        uses: actions/setup-node@v3.5.1
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: NPM Install
+        working-directory: ${{ env.TASK_DIR }}
+        run: npm install
+      
+      - name: Execute Image Update
+        working-directory: ${{ env.TASK_DIR }}
+        run: node main.js
+
+      - name: 'Failure notification'
+        uses: act10ns/slack@v1
+        with:
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+        if: failure()

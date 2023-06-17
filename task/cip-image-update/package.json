@@ -1,0 +1,27 @@
+{
+  "name": "cip-image-update",
+  "version": "1.0.0",
+  "description": "A task to update base CIP images.",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "start": "node main.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RedVentures/container-image-pipeline.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/RedVentures/container-image-pipeline/issues"
+  },
+  "homepage": "https://github.com/RedVentures/container-image-pipeline#readme",
+  "dependencies": {
+    "crypto-js": "^4.1.1",
+    "glob": "^8.0.3",
+    "node-fetch": "^3.2.10",
+    "semver": "^7.3.8"
+  }
+}

@@ -1,0 +1,4 @@
+{
+    "name": "php-7.4-fpm-alpine",
+    "private": true
+}

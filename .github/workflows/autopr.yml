@@ -1,0 +1,71 @@
+#Used mostly to troubleshoot automatic pull requests batch updates
+name: 'Auto PR - Dev'
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+    branches:
+      - '*'
+    paths:
+      '.github/workflows/autopr.yml'
+
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+  git_api_token: ${{ secrets.GH_TOKEN }}
+  git_api_url: "https://api.github.com"
+  ARTIFACTORY_REPO: "redventures-container-pipeline-docker.jfrog.io"
+  ARTIFACTORY_USER: "container-pipeline-ci"
+  ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
+  AWS_REGION: "us-east-1"
+  AWS_ACCOUNT_ID: "089022728777" # rv-anvil-prod
+  ECR_REGISTRY: "089022728777.dkr.ecr.us-east-1.amazonaws.com"
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  SRC_ACCESS_TOKEN: ${{ secrets.SRC_ACCESS_TOKEN }} # SOURCEGRAPH ACCESS TOKEN
+  SRC_ENDPOINT: ${{ secrets.SRC_ENDPOINT }} # SOURCEGRAPH RV ENDPOINT
+  IMAGE: "rv-python-3.9-slim-foobar"
+  SEM_VER: "1.0.6"
+  ORGS_FILTER: "RedVentures|HigherEducation|bankrate|CreditCardsCom|LonelyPlanet|Red-Digital|cbsi-cmg"
+
+jobs:
+  image-update-pr:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - REGISTRY_TYPE: "ECR"
+            REGISTRY_ENDPOINT: "089022728777.dkr.ecr.us-east-1.amazonaws.com"
+          - REGISTRY_TYPE: "ARTIFACTORY"
+            REGISTRY_ENDPOINT: "redventures-container-pipeline-docker.jfrog.io"
+    env:
+      REGISTRY_TYPE: ${{ matrix.REGISTRY_TYPE }}
+      REGISTRY_ENDPOINT: ${{ matrix.REGISTRY_ENDPOINT }}
+      SG_BATCH_ID : ${{ github.run_id }}_${{ github.run_attempt }}
+    name: 'Image update PR'
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - id: init-and-auth-sourcegraph-cli
+        run: |
+          # SourceGraph CLI Init
+          curl -L https://sourcegraph.com/.api/src-cli/src_linux_amd64 -o /usr/local/bin/src
+          chmod +x /usr/local/bin/src
+          src login # Uses SRC_ACCESS_TOKEN and SRC_ENDPOINT env variables to authenticate.
+      - id: image-update-PRs
+        run: |
+          # Create image batch updates pull requests (PRs)
+          docker run hello-world | head -n 3
+          echo "Docker Info NCPU:" $(docker info --format '{{ .NCPU }}')
+          sudo apt-get install gettext=0.19.8.1-10build1 -y
+          echo $REGISTRY_ENDPOINT/$IMAGE:$SEM_VER
+          cat .github/workflows/update-image.batch.template.sg | envsubst > tmp.yml && mv tmp.yml .github/workflows/update-image.batch.$REGISTRY_TYPE.sg
+          cat .github/workflows/update-image.batch.$REGISTRY_TYPE.sg
+          #src batch preview -f .github/workflows/update-image.batch.$REGISTRY_TYPE.sg
+          src batch apply -v -f .github/workflows/update-image.batch.$REGISTRY_TYPE.sg
+
+          

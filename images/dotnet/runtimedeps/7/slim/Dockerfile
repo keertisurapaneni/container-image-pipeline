@@ -1,0 +1,16 @@
+# https://hub.docker.com/_/microsoft-dotnet-runtime-deps/
+FROM mcr.microsoft.com/dotnet/runtime-deps:7.0.5-bullseye-slim
+
+# Update and upgrade packages
+RUN apt-get update && \
+    apt-get -y upgrade && \
+    # Install Certificates and Timezone data
+    apt-get -y install ca-certificates tzdata
+
+# Create and use a non-root user
+RUN groupadd -r app && \
+    useradd -r -g app -s /sbin/nologin -c "Docker image user" app && \
+    mkdir /app && chown -R app:app /app/
+USER app
+
+

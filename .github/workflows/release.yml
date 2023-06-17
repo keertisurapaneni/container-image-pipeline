@@ -1,0 +1,53 @@
+## Reference: https://www.learncloudnative.com/blog/2020-02-20-github-action-build-push-docker-images
+name: 'Release version'
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'images/**/base/Dockerfile'
+      - 'images/**/*buster*/Dockerfile'
+      - 'images/**/*alpine*/Dockerfile'
+      - 'images/**/slim/Dockerfile'
+      - 'images/**/*bullseye*/Dockerfile'
+      - 'images/**/*amazon*/Dockerfile'
+      - '!images/**/test/Dockerfile'
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_FAILURE_WEBHOOK }} # used by act10ns/slack@v1
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    name: 'Semantic release'
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - id: files
+        uses: jitterbit/get-changed-files@v1
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18.x'
+      - run: npm install -D 'semantic-release@^19.0.0' semantic-release-monorepo
+      - id: 'semantic-release'
+        run: |
+          # Semantic release
+          # To fix: The local branch master is behind the remote one, therefore a new version won't be published.
+          for changed_file in ${{ steps.files.outputs.added_modified }}; do
+          # for x in $(git diff-tree --no-commit-id --name-only --diff-filter=d -r ${{ github.event.before }} ${{ github.sha }} | grep "Dockerfile"); do
+            if echo $changed_file | grep -v "test" | grep -q "Dockerfile"; then
+              echo "Changed file: $changed_file"
+              folder=${changed_file%/*} # Remove everything after last / which is usually a Dockerfile, needed for Semantic monorelease
+              # This is for semantic release for monorepo, requires package.json in individual folders
+              cd $folder && git pull && npx semantic-release -e semantic-release-monorepo && cd -
+              echo "----------------------------------------------------------------------------"
+            fi
+          done
+      - name: 'Failure notification'
+        uses: act10ns/slack@v1
+        with:
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+        if: failure()

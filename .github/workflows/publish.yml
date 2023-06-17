@@ -1,0 +1,463 @@
+name: 'Publish image'
+on:
+  release:
+    types: [created]
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}  
+  ARTIFACTORY_REPO: "redventures-container-pipeline-docker.jfrog.io"
+  ARTIFACTORY_USER: "container-pipeline-ci"
+  ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
+  git_api_token: ${{ secrets.GH_TOKEN }}
+  git_api_url: "https://api.github.com"
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_FAILURE_WEBHOOK }} # used by act10ns/slack@v1
+  AWS_REGION: "us-east-1"
+  AWS_ACCOUNT_ID: "089022728777" # rv-anvil-prod
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  GCLOUD_PROJECT_ID: ${{ secrets.GCLOUD_PROJECT_ID }} # rv-base-images
+  SRC_ACCESS_TOKEN: ${{ secrets.SRC_ACCESS_TOKEN }} # SOURCEGRAPH ACCESS TOKEN
+  SRC_ENDPOINT: "https://redventures.sourcegraph.com" # SOURCEGRAPH RV ENDPOINT
+  ORGS_FILTER: "RedVentures|HigherEducation|bankrate|CreditCardsCom|LonelyPlanet|Red-Digital|cbsi-cmg"
+
+jobs:
+  push-to-artifactory:
+    runs-on: ubuntu-latest
+    name: 'Push to artifactory'
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - id: 'export-git-tag'
+        run: |
+          # Retrieving Git tag
+          # Folder structure: images/node/15/buster/Dockerfile (FROM node:15.7-buster) or images/golang/1.15/alpine/Dockerfile (FROM golang:1.15.11-alpine)
+          GIT_TAG=${GITHUB_REF#"refs/tags/"} # For ex: node-15-buster-v1.0.0 or golang-1.15-alpine-v1.0.0 or dotnet-aspnet-3.1-alpine-v1.0.1
+          echo "Git tag is $GIT_TAG"
+          SEM_VER=${GIT_TAG#*-v} # 1.0.0
+          echo "SEM_VER=${SEM_VER}" >> $GITHUB_ENV
+          IMAGE=${GIT_TAG%-*} # node-15-buster or golang-1.15-alpine or alpine-3-base or dotnet-aspnet-3.1-alpine
+          IMAGE_LANG=`echo "$IMAGE" | awk -F"-" '{print $1;}'` # node or golang or dotnet
+          echo "IMAGE_LANG=${IMAGE_LANG}" >> $GITHUB_ENV
+          if echo $IMAGE | grep -q "dotnet"; then # dotnet-aspnet-3.1-buster-slim or dotnet-aspnet-3.1-alpine
+            IMAGE_TYPE=`echo "$IMAGE" | awk -F"-" '{print $2;}'` # aspnet
+            echo "IMAGE_TYPE=${IMAGE_TYPE}" >> $GITHUB_ENV
+            IMAGE_VER_DOTNET=`echo "$IMAGE" | awk -F"-" '{print $3;}'` # 3.1
+            echo "IMAGE_VER_DOTNET=${IMAGE_VER_DOTNET}" >> $GITHUB_ENV
+            IMAGE_VER=`echo "$IMAGE" | cut -f2,3 -d'-'` # aspnet-3.1
+            echo "IMAGE_VER=${IMAGE_VER}" >> $GITHUB_ENV
+            IMAGE_DIST=`echo $IMAGE | cut -f 4- -d'-'` # alpine or buster-slim
+            echo "IMAGE_DIST=${IMAGE_DIST}" >> $GITHUB_ENV
+          else
+            IMAGE_VER=`echo "$IMAGE" | awk -F"-" '{print $2;}'` # 15 or 1.15
+            echo "IMAGE_VER=${IMAGE_VER}" >> $GITHUB_ENV
+            # IMAGE_DIST=`echo "$IMAGE" | awk -F"-" '{print $3;}'` # buster or alpine
+            IMAGE_DIST=`echo $IMAGE | cut -f 3- -d'-'` # buster or alpine or fpm-buster-minimal
+            echo "IMAGE_DIST=${IMAGE_DIST}" >> $GITHUB_ENV
+          fi
+          # Image name based on whether image has -xyz pattern for ex: golang:1.15.11-alpine vs alpine:3.13
+          if [ $IMAGE_DIST != "base" ]; then
+            IMAGE=rv-$IMAGE_LANG-$IMAGE_VER-$IMAGE_DIST # node-15-buster
+            echo "IMAGE=${IMAGE}" >> $GITHUB_ENV
+          elif [ $IMAGE_DIST = "base" ]; then
+            IMAGE=rv-$IMAGE_LANG-$IMAGE_VER # alpine-3 
+            echo "IMAGE=${IMAGE}" >> $GITHUB_ENV
+          fi
+      - id: 'check-image-artifactory'
+        run: |
+          # Check if image exists already in Artifactory
+          function docker_image_exists() {
+            curl -u $ARTIFACTORY_USER:$ARTIFACTORY_TOKEN --silent -f -lSL https://redventures.jfrog.io/artifactory/container-pipeline-docker/$1/$2 > /dev/null
+          }
+
+          if docker_image_exists $IMAGE $SEM_VER; then
+              echo "Image already exists..skipping publish"
+              echo "::set-output name=exists::true"
+            else
+              echo "Image doesn't exist, creating in next steps!"
+          fi
+      - id: 'publish-image-artifactory'
+        if: steps.check-image-artifactory.outputs.exists != 'true'
+        run: |
+          # Build and push image to Artifactory
+          echo "Building $IMAGE:$SEM_VER image.."
+          if echo $IMAGE | grep -q "dotnet"; then # dotnet-aspnet-3.1-buster-slim or dotnet-aspnet-3.1-alpine
+            docker build -q -t $ARTIFACTORY_REPO/$IMAGE:$SEM_VER -t $ARTIFACTORY_REPO/$IMAGE:latest ./images/$IMAGE_LANG/$IMAGE_TYPE/$IMAGE_VER_DOTNET/$IMAGE_DIST
+          else
+            docker build -q -t $ARTIFACTORY_REPO/$IMAGE:$SEM_VER -t $ARTIFACTORY_REPO/$IMAGE:latest ./images/$IMAGE_LANG/$IMAGE_VER/$IMAGE_DIST
+          fi
+          echo "Successfully built $ARTIFACTORY_REPO/$IMAGE:$SEM_VER"
+          
+          # Pushing image
+          echo "Pushing $IMAGE:$SEM_VER to Artifactory.."
+          docker login $ARTIFACTORY_REPO -u $ARTIFACTORY_USER -p $ARTIFACTORY_TOKEN
+          docker push $ARTIFACTORY_REPO/$IMAGE:$SEM_VER
+          docker push $ARTIFACTORY_REPO/$IMAGE:latest
+          echo "Successfully pushed $ARTIFACTORY_REPO/$IMAGE:$SEM_VER"
+      - name: 'Failure notification'
+        uses: act10ns/slack@v1
+        with: 
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+        if: failure()
+
+
+  push-to-ecr:
+    runs-on: ubuntu-latest
+    name: 'Push to ECR'
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - id: 'export-git-tag'
+        run: |
+          # Retrieving Git tag
+          # Folder structure: images/node/15/buster/Dockerfile (FROM node:15.7-buster) or images/golang/1.15/alpine/Dockerfile (FROM golang:1.15.11-alpine)
+          GIT_TAG=${GITHUB_REF#"refs/tags/"} # For ex: node-15-buster-v1.0.0 or golang-1.15-alpine-v1.0.0
+          echo "Git tag is $GIT_TAG"
+          SEM_VER=${GIT_TAG#*-v} # 1.0.0
+          echo "SEM_VER=${SEM_VER}" >> $GITHUB_ENV
+          IMAGE=${GIT_TAG%-*} # node-15-buster or golang-1.15-alpine or alpine-3-base
+          IMAGE_LANG=`echo "$IMAGE" | awk -F"-" '{print $1;}'` # node or golang
+          echo "IMAGE_LANG=${IMAGE_LANG}" >> $GITHUB_ENV
+          if echo $IMAGE | grep -q "dotnet"; then # dotnet-aspnet-3.1-buster-slim or dotnet-aspnet-3.1-alpine
+            IMAGE_TYPE=`echo "$IMAGE" | awk -F"-" '{print $2;}'` # aspnet
+            echo "IMAGE_TYPE=${IMAGE_TYPE}" >> $GITHUB_ENV
+            IMAGE_VER_DOTNET=`echo "$IMAGE" | awk -F"-" '{print $3;}'` # 3.1
+            echo "IMAGE_VER_DOTNET=${IMAGE_VER_DOTNET}" >> $GITHUB_ENV
+            IMAGE_VER=`echo "$IMAGE" | cut -f2,3 -d'-'` # aspnet-3.1
+            echo "IMAGE_VER=${IMAGE_VER}" >> $GITHUB_ENV
+            IMAGE_DIST=`echo $IMAGE | cut -f 4- -d'-'` # alpine or buster-slim
+            echo "IMAGE_DIST=${IMAGE_DIST}" >> $GITHUB_ENV
+          else
+            IMAGE_VER=`echo "$IMAGE" | awk -F"-" '{print $2;}'` # 15 or 1.15
+            echo "IMAGE_VER=${IMAGE_VER}" >> $GITHUB_ENV
+            # IMAGE_DIST=`echo "$IMAGE" | awk -F"-" '{print $3;}'` # buster or alpine
+            IMAGE_DIST=`echo $IMAGE | cut -f 3- -d'-'` # buster or alpine or fpm-buster-minimal
+            echo "IMAGE_DIST=${IMAGE_DIST}" >> $GITHUB_ENV
+          fi
+          # Image name based on whether image has -xyz pattern for ex: golang:1.15.11-alpine vs alpine:3.13
+          if [ $IMAGE_DIST != "base" ]; then
+            IMAGE=rv-$IMAGE_LANG-$IMAGE_VER-$IMAGE_DIST # node-15-buster
+            echo "IMAGE=${IMAGE}" >> $GITHUB_ENV
+          elif [ $IMAGE_DIST = "base" ]; then
+            IMAGE=rv-$IMAGE_LANG-$IMAGE_VER # alpine-3 
+            echo "IMAGE=${IMAGE}" >> $GITHUB_ENV
+          fi
+          ECR_REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+          echo "ECR_REGISTRY=${ECR_REGISTRY}" >> $GITHUB_ENV
+      - id: 'check-image-ecr'
+        run: |
+          # Check if image exists already in ECR
+          function docker_image_exists() {
+            echo "ECR registry: $ECR_REGISTRY"
+            aws ecr get-login-password --region $AWS_REGION \
+            | docker login --username AWS --password-stdin $ECR_REGISTRY
+
+            aws ecr describe-images --repository-name=$1 --image-ids=imageTag=$2 2> /dev/null
+          }
+
+          if docker_image_exists $IMAGE $SEM_VER; then
+              echo "Image already exists..skipping publish"
+              echo "::set-output name=exists::true"
+            else
+              echo "Image doesn't exist, creating in next steps!"
+          fi
+      - id: 'publish-image-ecr'
+        if: steps.check-image-ecr.outputs.exists != 'true'
+        run: |
+          # Build and push image to ECR
+          echo "ECR registry: $ECR_REGISTRY"
+
+          # Login to ECR
+          aws ecr get-login-password --region $AWS_REGION \
+          | docker login --username AWS --password-stdin $ECR_REGISTRY
+
+          # Check if repo exists, if not create repo, set repo policy and lifecycle policy
+          aws ecr describe-repositories --repository-names $IMAGE || aws ecr create-repository --repository-name $IMAGE --tags '[{"Key":"Name","Value":"container-image-pipeline"},{"Key":"IsProduction","Value":"true"},{"Key":"Provisioner","Value":"aws-cli://github.com/RedVentures/container-image-pipeline"},{"Key":"DataClassification","Value":"India"},{"Key":"ResiliencyTier","Value":"bronze"},{"Key":"ServiceNowAppID","Value":"BAPP002203"}]'
+          aws ecr set-repository-policy --repository-name $IMAGE --policy-text "file://ecr_policies/repo-policy.json" && aws ecr put-lifecycle-policy --repository-name $IMAGE --lifecycle-policy-text "file://ecr_policies/lifecycle-policy.json"
+          if echo $IMAGE | grep -q "dotnet"; then # dotnet-aspnet-3.1-buster-slim or dotnet-aspnet-3.1-alpine
+            docker build -t $ECR_REGISTRY/$IMAGE:$SEM_VER -t $ECR_REGISTRY/$IMAGE:latest ./images/$IMAGE_LANG/$IMAGE_TYPE/$IMAGE_VER_DOTNET/$IMAGE_DIST
+          else
+            docker build -t $ECR_REGISTRY/$IMAGE:$SEM_VER -t $ECR_REGISTRY/$IMAGE:latest ./images/$IMAGE_LANG/$IMAGE_VER/$IMAGE_DIST
+          fi
+          docker push $ECR_REGISTRY/$IMAGE:$SEM_VER
+          docker push $ECR_REGISTRY/$IMAGE:latest
+      - name: 'Failure notification'
+        uses: act10ns/slack@v1
+        with: 
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+        if: failure()
+  
+  push-to-gcr:
+    runs-on: ubuntu-latest
+    name: 'Push to GCR'
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud'
+        uses: google-github-actions/auth@v0.4.4
+        with:
+          credentials_json: ${{ secrets.GCLOUD_SERVICE_KEY }}
+      # Install gcloud, `setup-gcloud` automatically picks up authentication from `auth`.
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v0.3.0'
+      # Now you can run gcloud commands authenticated as the impersonated service account.
+      - name: 'Use gcloud CLI'
+        run: 'gcloud info'
+      - id: 'export-git-tag'
+        run: |
+          # Retrieving Git tag
+          # Folder structure: images/node/15/buster/Dockerfile (FROM node:15.7-buster) or images/golang/1.15/alpine/Dockerfile (FROM golang:1.15.11-alpine)
+          GIT_TAG=${GITHUB_REF#"refs/tags/"} # For ex: node-15-buster-v1.0.0 or golang-1.15-alpine-v1.0.0
+          SEM_VER=${GIT_TAG#*-v} # 1.0.0
+          echo "SEM_VER=${SEM_VER}" >> $GITHUB_ENV
+          IMAGE=${GIT_TAG%-*} # node-15-buster or golang-1.15-alpine or alpine-3-base
+          IMAGE_LANG=`echo "$IMAGE" | awk -F"-" '{print $1;}'` # node or golang
+          echo "IMAGE_LANG=${IMAGE_LANG}" >> $GITHUB_ENV
+          if echo $IMAGE | grep -q "dotnet"; then # dotnet-aspnet-3.1-buster-slim or dotnet-aspnet-3.1-alpine
+            IMAGE_TYPE=`echo "$IMAGE" | awk -F"-" '{print $2;}'` # aspnet
+            echo "IMAGE_TYPE=${IMAGE_TYPE}" >> $GITHUB_ENV
+            IMAGE_VER_DOTNET=`echo "$IMAGE" | awk -F"-" '{print $3;}'` # 3.1
+            echo "IMAGE_VER_DOTNET=${IMAGE_VER_DOTNET}" >> $GITHUB_ENV
+            IMAGE_VER=`echo "$IMAGE" | cut -f2,3 -d'-'` # aspnet-3.1
+            echo "IMAGE_VER=${IMAGE_VER}" >> $GITHUB_ENV
+            IMAGE_DIST=`echo $IMAGE | cut -f 4- -d'-'` # alpine or buster-slim
+            echo "IMAGE_DIST=${IMAGE_DIST}" >> $GITHUB_ENV
+          else
+            IMAGE_VER=`echo "$IMAGE" | awk -F"-" '{print $2;}'` # 15 or 1.15
+            echo "IMAGE_VER=${IMAGE_VER}" >> $GITHUB_ENV
+            # IMAGE_DIST=`echo "$IMAGE" | awk -F"-" '{print $3;}'` # buster or alpine
+            IMAGE_DIST=`echo $IMAGE | cut -f 3- -d'-'` # buster or alpine or fpm-buster-minimal
+            echo "IMAGE_DIST=${IMAGE_DIST}" >> $GITHUB_ENV
+          fi
+          # Image name based on whether image has -xyz pattern for ex: golang:1.15.11-alpine vs alpine:3.13
+          if [ $IMAGE_DIST != "base" ]; then
+            IMAGE=rv-$IMAGE_LANG-$IMAGE_VER-$IMAGE_DIST # node-15-buster
+            echo "IMAGE=${IMAGE}" >> $GITHUB_ENV
+          elif [ $IMAGE_DIST = "base" ]; then
+            IMAGE=rv-$IMAGE_LANG-$IMAGE_VER # alpine-3 
+            echo "IMAGE=${IMAGE}" >> $GITHUB_ENV
+          fi
+          GCR_REGISTRY="gcr.io/$GCLOUD_PROJECT_ID"
+          echo "GCR_REGISTRY=${GCR_REGISTRY}" >> $GITHUB_ENV
+      - id: 'check-image-gcr'
+        run: |
+          # Check if image exists already in GCR
+          function docker_image_exists() {
+            echo "GCR registry: $GCR_REGISTRY"
+            # Configure docker to use the gcloud command-line tool as a credential helper
+            gcloud auth configure-docker -q 
+            gcloud container images describe $GCR_REGISTRY/$IMAGE:$SEM_VER 2> /dev/null
+          }
+          if docker_image_exists; then
+              echo "Image already exists..skipping publish"
+              echo "::set-output name=exists::true"
+            else
+              echo "Image doesn't exist, creating in next steps!"
+          fi
+      - id: 'publish-image-gcr'
+        if: steps.check-image-gcr.outputs.exists != 'true'
+        run: |
+          # Configure docker to use the gcloud command-line tool as a credential helper
+          gcloud auth configure-docker -q
+          # Build image
+          if echo $IMAGE | grep -q "dotnet"; then # dotnet-aspnet-3.1-buster-slim or dotnet-aspnet-3.1-alpine
+            docker build -t $GCR_REGISTRY/$IMAGE:$SEM_VER -t $GCR_REGISTRY/$IMAGE:latest ./images/$IMAGE_LANG/$IMAGE_TYPE/$IMAGE_VER_DOTNET/$IMAGE_DIST
+          else
+            docker build -t $GCR_REGISTRY/$IMAGE:$SEM_VER -t $GCR_REGISTRY/$IMAGE:latest ./images/$IMAGE_LANG/$IMAGE_VER/$IMAGE_DIST
+          fi
+          # Push image to Google Container Registry
+          docker push $GCR_REGISTRY/$IMAGE:$SEM_VER
+          docker push $GCR_REGISTRY/$IMAGE:latest
+      - name: 'Failure notification'
+        uses: act10ns/slack@v1
+        with: 
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+        if: failure()
+
+  docs-slack:
+    runs-on: ubuntu-latest
+    name: 'Update docs and notify'
+    needs: [push-to-artifactory, push-to-ecr, push-to-gcr]
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - id: 'export-git-tag'
+        run: |
+          # Retrieving Git tag
+          # Folder structure: images/node/15/buster/Dockerfile (FROM node:15.7-buster) or images/golang/1.15/alpine/Dockerfile (FROM golang:1.15.11-alpine)
+          GIT_TAG=${GITHUB_REF#"refs/tags/"} # For ex: node-15-buster-v1.0.0 or golang-1.15-alpine-v1.0.0
+          # GIT_TAG=python-3.9-slim-v1.0.0
+          echo "Git tag is $GIT_TAG"
+          SEM_VER=${GIT_TAG#*-v} # 1.0.0
+          echo "SEM_VER=${SEM_VER}" >> $GITHUB_ENV
+          echo $SEM_VER > SEM_VER.dat
+          IMAGE=${GIT_TAG%-*} # node-15-buster or golang-1.15-alpine or alpine-3-base
+          IMAGE_LANG=`echo "$IMAGE" | awk -F"-" '{print $1;}'` # node or golang
+          echo "IMAGE_LANG=${IMAGE_LANG}" >> $GITHUB_ENV
+          if echo $IMAGE | grep -q "dotnet"; then # dotnet-aspnet-3.1-buster-slim or dotnet-aspnet-3.1-alpine
+            IMAGE_TYPE=`echo "$IMAGE" | awk -F"-" '{print $2;}'` # aspnet
+            echo "IMAGE_TYPE=${IMAGE_TYPE}" >> $GITHUB_ENV
+            IMAGE_VER_DOTNET=`echo "$IMAGE" | awk -F"-" '{print $3;}'` # 3.1
+            echo "IMAGE_VER_DOTNET=${IMAGE_VER_DOTNET}" >> $GITHUB_ENV
+            IMAGE_VER=`echo "$IMAGE" | cut -f2,3 -d'-'` # aspnet-3.1
+            echo "IMAGE_VER=${IMAGE_VER}" >> $GITHUB_ENV
+            IMAGE_DIST=`echo $IMAGE | cut -f 4- -d'-'` # alpine or buster-slim
+            echo "IMAGE_DIST=${IMAGE_DIST}" >> $GITHUB_ENV
+          else
+            IMAGE_VER=`echo "$IMAGE" | awk -F"-" '{print $2;}'` # 15 or 1.15
+            echo "IMAGE_VER=${IMAGE_VER}" >> $GITHUB_ENV
+            # IMAGE_DIST=`echo "$IMAGE" | awk -F"-" '{print $3;}'` # buster or alpine
+            IMAGE_DIST=`echo $IMAGE | cut -f 3- -d'-'` # buster or alpine or fpm-buster-minimal
+            echo "IMAGE_DIST=${IMAGE_DIST}" >> $GITHUB_ENV
+          fi
+          # Image name based on whether image has -xyz pattern for ex: golang:1.15.11-alpine vs alpine:3.13
+          if [ $IMAGE_DIST != "base" ]; then
+            IMAGE=rv-$IMAGE_LANG-$IMAGE_VER-$IMAGE_DIST # node-15-buster
+            echo "IMAGE=${IMAGE}" >> $GITHUB_ENV
+          elif [ $IMAGE_DIST = "base" ]; then
+            IMAGE=rv-$IMAGE_LANG-$IMAGE_VER # alpine-3 
+            echo "IMAGE=${IMAGE}" >> $GITHUB_ENV
+          fi
+          echo $IMAGE > IMAGE.dat
+          GCR_REGISTRY="gcr.io/$GCLOUD_PROJECT_ID"
+          echo "GCR_REGISTRY=${GCR_REGISTRY}" >> $GITHUB_ENV
+          ECR_REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+          echo "ECR_REGISTRY=${ECR_REGISTRY}" >> $GITHUB_ENV
+      - name: Upload IMAGE name Artifact #Artifacts to share IMAGE and SEM_VER across jobs since it's not possible to share env variables across jobs
+        uses: actions/upload-artifact@v3
+        with:
+          name: image-name
+          path: IMAGE.dat
+      - name: Upload SEM_VER Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: sem-ver
+          path: SEM_VER.dat
+      - id: 'update-readme'
+        run: |
+          # Update README.md
+          git checkout master
+          git config --global user.email "rv-container-pipeline_svc@redventures.com"
+          git config --global user.name "rv-container-pipeline"
+          if echo $IMAGE | grep -q "dotnet"; then # dotnet-aspnet-3.1-buster-slim
+            x="./images/$IMAGE_LANG/$IMAGE_TYPE/$IMAGE_VER_DOTNET/$IMAGE_DIST/Dockerfile"
+            BASE_IMAGE=`grep 'FROM' $x | cut -f2,3 -d'/'`
+          else
+            x="./images/$IMAGE_LANG/$IMAGE_VER/$IMAGE_DIST/Dockerfile"
+            BASE_IMAGE=`grep 'FROM' $x | awk '{print $2}'`
+          fi       
+          echo "Changed file: $x"
+          echo "BASE_IMAGE is $BASE_IMAGE"
+          git pull
+          if grep -q "$IMAGE:" README.md; then
+            # Updates existing entry
+            # Since BASE_IMAGE (dotnet/aspnet:3.1.15-buster-slim) has /, we cannot use / as a delimited in sed command
+            # To eliminate the following error, using another separator % instead of /: sed: -e expression #1, char 102: unknown option to `s'
+            # https://stackoverflow.com/questions/20808095/why-do-alternate-delimiters-not-work-with-sed-e-pattern-s-a-b
+            sed -i "s?$IMAGE:.*?$IMAGE:$SEM_VER | $BASE_IMAGE | $(TZ=":US/Eastern" date +"%m-%d-%Y %T") |?" README.md
+          else
+            # Adds new entry line after the last |
+            awk 'FNR==NR{ if (/\|/) p=NR; next} 1; FNR==p{ print "enter_new_entry"}' README.md README.md >> tmp
+            # Sed replaces "enter_new_entry" with required fields
+            if echo $IMAGE | grep -q "dotnet"; then
+              sed "s?enter_new_entry?| ${IMAGE_LANG^} $IMAGE_TYPE $IMAGE_VER_DOTNET $IMAGE_DIST | $IMAGE:$SEM_VER | $BASE_IMAGE | $(TZ=":US/Eastern" date +"%m-%d-%Y %T") |?" tmp > README.md
+            else
+              sed "s?enter_new_entry?| ${IMAGE_LANG^} $IMAGE_VER $IMAGE_DIST | $IMAGE:$SEM_VER | $BASE_IMAGE | $(TZ=":US/Eastern" date +"%m-%d-%Y %T") |?" tmp > README.md
+            fi
+            # Remove tmp file
+            rm -rf tmp
+          fi
+          git add README.md
+          git commit -m "docs: latest released image for $IMAGE_LANG-$IMAGE_VER-$IMAGE_DIST [skip ci]"
+          git push
+      - name: 'Success notification'
+        uses: someimportantcompany/github-actions-slack-message@v1
+        if: success()
+        with:
+          webhook-url: ${{ secrets.SLACK_INCOMING_WEBHOOK }}
+          text: |
+            :white_check_mark: ${{ env.IMAGE }}:${{ env.SEM_VER }} deployed to Artifactory & ECR (rv-anvil-prod) & GCR (rv-base-images) successfully :tada:. 
+            <https://github.com/${{ github.repository }}/blob/master/README.md|Click here to get latest image info>
+          color: "#1CCD2D"
+          channel: 'container-image-releases'
+      - name: 'Failure notification'
+        uses: act10ns/slack@v1
+        with: 
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+        if: failure()
+
+  images-updates-prs:
+    runs-on: ubuntu-latest
+    name: 'Image batch updates PRs'
+    needs: [push-to-artifactory, push-to-ecr, push-to-gcr, docs-slack]
+    strategy:
+      matrix:
+        include:
+          - REGISTRY_TYPE: "ECR"
+            REGISTRY_ENDPOINT: "089022728777.dkr.ecr.us-east-1.amazonaws.com"
+          - REGISTRY_TYPE: "ARTIFACTORY"
+            REGISTRY_ENDPOINT: "redventures-container-pipeline-docker.jfrog.io"
+          - REGISTRY_TYPE: "GCR"
+            REGISTRY_ENDPOINT: "gcr.io/rv-base-images"
+    env:
+      REGISTRY_TYPE: ${{ matrix.REGISTRY_TYPE }}
+      REGISTRY_ENDPOINT: ${{ matrix.REGISTRY_ENDPOINT }}
+      SG_BATCH_ID : ${{ github.run_id }}_${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Download IMAGE name value
+        uses: actions/download-artifact@v3
+        with:
+          name: image-name
+      - name: Download SEM_VER value
+        uses: actions/download-artifact@v3
+        with:
+          name: sem-ver
+      - id: init-and-auth-sourcegraph-cli
+        run: |
+          # SourceGraph CLI Init
+          curl -L https://sourcegraph.com/.api/src-cli/src_linux_amd64 -o /usr/local/bin/src
+          chmod +x /usr/local/bin/src
+          src login # Uses SRC_ACCESS_TOKEN and SRC_ENDPOINT env variables to authenticate.
+      - id: image-update-PRs
+        name: image_update_prs
+        continue-on-error: true
+        run: |
+          # Create image batch updates pull requests (PRs) with SourceGraph
+          docker run hello-world | head -n 3
+          echo "Docker Info NCPU:" $(docker info --format '{{ .NCPU }}')
+          sudo apt-get install gettext -y
+          export IMAGE=$(cat IMAGE.dat) # Get IMAGE name value from Artifact
+          export SEM_VER=$(cat SEM_VER.dat) # Get SEM_VER value from Artifact
+          echo "IMAGE=${IMAGE}" >> $GITHUB_ENV
+          echo "SEM_VER=${SEM_VER}" >> $GITHUB_ENV
+          echo $REGISTRY_ENDPOINT/$IMAGE:$SEM_VER
+          cat .github/workflows/update-image.batch.template.sg | envsubst > tmp.yml && mv tmp.yml .github/workflows/update-image.batch.$REGISTRY_TYPE.sg
+          cat .github/workflows/update-image.batch.$REGISTRY_TYPE.sg
+          #src batch preview -f .github/workflows/update-image.batch.$REGISTRY_TYPE.sg
+          src batch apply -v -f .github/workflows/update-image.batch.$REGISTRY_TYPE.sg
+      - id: retry-image-update-prs
+        name: retry_image_update_prs
+        if: steps.image_update_prs.outcome=='failure' # check the previous step outcome, retry.
+        run: |
+          # Previous step failed - Retrying image batch updates PRs with SourceGraph...
+          echo "Docker Info NCPU:" $(docker info --format '{{ .NCPU }}')
+          cat .github/workflows/update-image.batch.$REGISTRY_TYPE.sg
+          #src batch preview -f .github/workflows/update-image.batch.$REGISTRY_TYPE.sg
+          src batch apply -v -f .github/workflows/update-image.batch.$REGISTRY_TYPE.sg
+      - name: 'Failure notification'
+        uses: act10ns/slack@v1
+        with: 
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+        if: failure()
