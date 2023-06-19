@@ -4,8 +4,8 @@ import github from "./github.js";
 import glob from "glob";
 
 const TRUNK_BRANCH = "master";
-const COMMIT_USER = "rv-container-pipeline";
-const COMMIT_EMAIL = "CloudDeveloperTools@redventures.com";
+const COMMIT_USER = "keertisurapaneni";
+const COMMIT_EMAIL = "keertisurapaneni@gmail.com";
 const SLEEP_INTERVAL = 10 * 1000; // in milliseconds
 const DOCKERFILE_GLOB = "../../images/**/Dockerfile";
 
