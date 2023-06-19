@@ -1,5 +1,5 @@
 # Java 17 buster iamge with newrelic
-FROM openjdk:19-jdk-bullseye
+FROM openjdk:undefined
 
 ENV CONTAINER_PATH "/var/www"
 ENV NEW_RELIC_LICENSE_KEY ""
