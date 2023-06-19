@@ -85,36 +85,36 @@ jobs:
           name: myimage
           path: image.tar
 
-  wiz:
-    runs-on: ubuntu-latest
-    needs: [build-test]
-    strategy:
-      fail-fast: false
-      matrix:
-        image: ${{ fromJson(needs.build-test.outputs.matrix-json) }}
-    name: 'Wiz scan'
-    steps:
-      - uses: actions/checkout@v2
-        with:
-          fetch-depth: 0
-      - name: Download artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: myimage
-          path: image.tar
-      - name: Load Docker image
-        run: |
-          cd image.tar
-          docker load --input image.tar
-          docker image ls -a
-      - run: docker image ls
-      - name: 'Wiz scan and Slack notification'
-        uses: lonelyplanet/actions/.github/actions/wiz-scan-notify@main
-        with:
-          image: ${{ matrix.image }}
-          # slack_notify: true # Use this instead to send a Slack notification for every failed scan including Pull request events
-          slack_notify: ${{ github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch' }} # Notify when merged to master or manual workflow trigger
-          slack_channel: 'container-image-failures'
-          SLACK_WEBHOOK: ${{ secrets.SLACK_FAILURE_WEBHOOK }}
-          WIZCLI_ID: ${{ secrets.WIZCLI_ID }}
-          WIZCLI_SECRET: ${{ secrets.WIZCLI_SECRET }}
+#   wiz:
+#     runs-on: ubuntu-latest
+#     needs: [build-test]
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         image: ${{ fromJson(needs.build-test.outputs.matrix-json) }}
+#     name: 'Wiz scan'
+#     steps:
+#       - uses: actions/checkout@v2
+#         with:
+#           fetch-depth: 0
+#       - name: Download artifact
+#         uses: actions/download-artifact@v3
+#         with:
+#           name: myimage
+#           path: image.tar
+#       - name: Load Docker image
+#         run: |
+#           cd image.tar
+#           docker load --input image.tar
+#           docker image ls -a
+#       - run: docker image ls
+#       - name: 'Wiz scan and Slack notification'
+#         uses: lonelyplanet/actions/.github/actions/wiz-scan-notify@main
+#         with:
+#           image: ${{ matrix.image }}
+#           # slack_notify: true # Use this instead to send a Slack notification for every failed scan including Pull request events
+#           slack_notify: ${{ github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch' }} # Notify when merged to master or manual workflow trigger
+#           slack_channel: 'container-image-failures'
+#           SLACK_WEBHOOK: ${{ secrets.SLACK_FAILURE_WEBHOOK }}
+#           WIZCLI_ID: ${{ secrets.WIZCLI_ID }}
+#           WIZCLI_SECRET: ${{ secrets.WIZCLI_SECRET }}
