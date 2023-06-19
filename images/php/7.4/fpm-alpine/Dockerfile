@@ -1,5 +1,5 @@
 # Php fpm alpine image 
-FROM php:7.4.26-fpm-alpine
+FROM php:7.4.33-fpm-alpine
 
 ENV stdout /dev/stdout
 ENV stderr /dev/stderr
