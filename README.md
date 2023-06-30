@@ -1,6 +1,11 @@
 [![semantic-release](https://img.shields.io/badge/%20%20%F0%9F%93%A6%F0%9F%9A%80-semantic--release-e10079.svg)](https://github.com/semantic-release/semantic-release)
 
-Interested in learning how to onboard or curious about the setup? [Click here!](https://platform.rvdocs.io/container_image_pipeline/#initial-onboarding)
+Pipeline Setup
+Interested in understanding the container image pipeline setup? Here is the complete flow:
+
+![container_image_pipeline_cicd-a7a2137a91841329623c9ec110adaece](https://github.com/keertisurapaneni/container-image-pipeline/assets/1882178/470396f0-b587-4bc3-8dc0-d9487752cdc0)
+
+
 
 Latest released images:
 -----------------
