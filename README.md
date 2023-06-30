@@ -11,19 +11,21 @@ Interested in understanding the container image pipeline setup? Here is the comp
 Github Actions
 Github Actions handles the CI/CD portion of the pipeline. We have 3 different workflows setup in RedVentures/container-image-pipeline repo which get triggered based on the below Github events:
 
-Pull request
+**Pull request**
 
 Everytime a PR is opened/edited/reopened/synchronized in the repo (including Snyk PRs) and a Dockerfile is getting modified, Github Actions will run a workflow to build the new image and test this new image. It gets triggered for both modified or completely new Dockerfiles. If the workflow fails, it is recommended you fix your PR code.
 
 For Snyk PRs, it also verifies if the base image that is getting changed in a certain Dockerfile is within the scope of the image version in the folder structure. For example, Let's say Snyk wants to upgrade the image present in images/golang/1.15/alpine/Dockerfile, here are two scenarios based on the PR change:
 
-Valid PR scenario: If Snyk PR wants to upgrade from golang-1.15.6-alpine to golang-1.15.9, it is a valid PR since the version in folder structure (1.15) seems to be present in the base image (golang-1.15.9). The workflow then proceeds to the build and test steps.
-Invalid PR scenaio: If Snyk PR wants to upgrade from golang-1.15.6-alpine to golang-1.16.0, it is an invalid PR since the version in folder structure (1.15) doesn't seem to be present in the base image (golang-1.16.0). The workflow closes the PR and deletes the PR branch for us. 🎉
-Push
+- Valid PR scenario: If Snyk PR wants to upgrade from golang-1.15.6-alpine to golang-1.15.9, it is a valid PR since the version in folder structure (1.15) seems to be present in the base image (golang-1.15.9). The workflow then proceeds to the build and test steps.
+
+- Invalid PR scenaio: If Snyk PR wants to upgrade from golang-1.15.6-alpine to golang-1.16.0, it is an invalid PR since the version in folder structure (1.15) doesn't seem to be present in the base image (golang-1.16.0). The workflow closes the PR and deletes the PR branch for us. 🎉
+
+**Push**
 
 Once we review and merge the PR to the master branch, it will trigger a Github Actions workflow which looks at all modifed/new Dockerfiles and for each Dockerfile, it creates a new Git tag+release. The versioning is handled by Semantic release for mono repo.
 
-Release
+**Release**
 
 Once a Git release is created, the final Github actions workflow is triggered. This workflow builds the image, pushes the image to Artifactory and ECR, creates automatic PRs in all repos using the image to replace any image tag with latest image tag, updates README.md with latest image info and sends Slack notifications.
 
