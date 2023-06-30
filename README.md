@@ -4,8 +4,7 @@ Container image pipeline provides us scanned Docker images with fewer high-sever
 
 **Note: Below is the old architecture for the pipeline, we are using Dockerhub in the new code instead of Snyk**
 
-Pipeline Setup
-Interested in understanding the container image pipeline setup? Here is the complete flow:
+Here is the complete flow of the legacy pipeline:
 
 ![container_image_pipeline_cicd-a7a2137a91841329623c9ec110adaece](https://github.com/keertisurapaneni/container-image-pipeline/assets/1882178/470396f0-b587-4bc3-8dc0-d9487752cdc0)
 
