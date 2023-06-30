@@ -146,9 +146,4 @@ Image info:
 **Jave image**
 - jdk-buster image: Image includes the default new relic deployment
 
--------------------
 
-Useful Links:
-- Documentation: [Platform docs](https://platform.rvdocs.io/container_image_pipeline)
-- Artifactory repo: [container-pipeline-docker](https://redventures.jfrog.io/ui/repos/tree/General/container-pipeline-docker)
-- Slack channel: [#container-image-releases](https://redventures.slack.com/archives/C01TBPPQF3P)
