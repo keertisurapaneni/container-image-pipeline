@@ -2,6 +2,8 @@
 
 Container image pipeline provides us scanned Docker images with fewer high-severity vulnerabilities. The images are continually scanned and new images are released if a better recommendation is found by Snyk. Also, when new version of an image is released and you are using the old version created by the pipeline; it automatically creates a PR in your repo to update the version of the image. All you have to do is review and merge it! :)
 
+**Note: Below is the old architecture for the pipeline, we are using Dockerhub in the new code instead of Snyk**
+
 Pipeline Setup
 Interested in understanding the container image pipeline setup? Here is the complete flow:
 
