@@ -1,5 +1,5 @@
 # Java 11 jdk image
-FROM amazoncorretto:11.0.19
+FROM amazoncorretto:11.0.20
 
 RUN yum update -y --security
 
