@@ -1,5 +1,5 @@
 # Create a minimal image
-FROM golang:1.19.10-bullseye
+FROM golang:1.19.12-bullseye
 
 # Update and upgrade packages
 RUN apt-get update && \
