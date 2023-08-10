@@ -1,5 +1,5 @@
 # Create a minimal image
-FROM node:16.20.0-alpine
+FROM node:16.20.2-alpine
 
 # Update and upgrade packages
 RUN apk update && \
