@@ -1,5 +1,5 @@
 # Create a minimal image 
-FROM python:3.9.17-slim
+FROM python:3.9.18-slim
 
 # Update and upgrade packages
 RUN apt-get update && \
