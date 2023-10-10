@@ -1,5 +1,5 @@
 # Create a minimal image
-FROM golang:1.20.5-alpine
+FROM golang:1.20.10-alpine
 
 ENV PATH /usr/local/go/bin:$PATH
 
