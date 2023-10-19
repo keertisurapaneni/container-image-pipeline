@@ -1,5 +1,5 @@
 # Java 17 jdk image
-FROM amazoncorretto:17.0.7
+FROM amazoncorretto:17.0.9
 
 RUN yum update -y --security
 
