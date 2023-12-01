@@ -1,5 +1,5 @@
 # Create a minimal image
-FROM alpine:3.18.0
+FROM alpine:3.18.5
 
 # Update and upgrade packages 
 RUN apk update && \
