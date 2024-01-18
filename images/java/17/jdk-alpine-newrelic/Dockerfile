@@ -1,5 +1,5 @@
 # Java 17 jdk alpine image
-FROM amazoncorretto:17.0.7-alpine
+FROM amazoncorretto:17.0.10-alpine
 
 # Update and upgrade packages
 RUN apk update && \
