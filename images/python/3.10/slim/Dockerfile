@@ -1,5 +1,5 @@
 # Create a minimal image.
-FROM python:3.10.12-slim
+FROM python:3.10.14-slim
 
 # Update and upgrade packages
 RUN apt-get update && \
