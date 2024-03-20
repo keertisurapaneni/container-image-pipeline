@@ -1,5 +1,5 @@
 # Create a minimal image.
-FROM python:3.8.17-slim
+FROM python:3.8.19-slim
 
 # Update and upgrade packages
 RUN apt-get update && \
