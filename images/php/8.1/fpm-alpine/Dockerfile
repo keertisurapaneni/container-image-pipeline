@@ -1,5 +1,5 @@
 # fpm-alpine
-FROM php:8.1.20-fpm-alpine
+FROM php:8.1.33-fpm-alpine
 
 ENV stdout /dev/stdout
 ENV stderr /dev/stderr
